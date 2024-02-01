@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('cover')->nullable();
             $table->string('writers');
             $table->string('file')->nullable();
-            $table->foreignId('user_id')->constrained()->onUpdate('cascade')->onDelete('cascade');
+            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete()->cascadeOnUpdate();
             $table->string('category');
             $table->text('description')->nullable();
             $table->string('price')->nullable();

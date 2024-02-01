@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Book;
 use App\Models\Submission;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class BookController extends Controller
@@ -14,10 +16,24 @@ class BookController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
+        $query_params = [];
+        $query_param_status = "";
+        if (isset($request->all()['writers'])) {
+            $query_params['writers'] = $request->all()['writers'];
+        }
+        if (isset($request->all()['user_id'])) {
+            $query_params['user_id'] = $request->all()['user_id'];
+        }
+        if (isset($request->all()['category'])) {
+            $query_params['category'] = $request->all()['category'];
+        }
+        if (isset($request->all()['status'])) {
+            $query_param_status = $request->all()['status'];
+        }
         try {
-            $data = Book::with('user')->get();
+            $data = Book::with('user')->with('submission')->whereRelation('submission', 'status', 'like', '%' . $query_param_status . '%')->where($query_params)->paginate(12);
             return response()->json([
                 'status' => 200,
                 'message' => "Berhasil mengambil data buku",
@@ -38,7 +54,13 @@ class BookController extends Controller
     {
         $data = [];
         try {
-            $data = $request->validate([
+            if ($request->file('cover')) {
+                $data['cover'] = Storage::putFile('book/cover', $request->file('cover'));
+            }
+            if ($request->file('file')) {
+                $data['file'] = Storage::putFile('book/file', $request->file('file'));
+            }
+            $validator = Validator::make($request->all(), [
                 'title' => ['required'],
                 'writers' => ['required'],
                 'category' => ['required'],
@@ -46,37 +68,12 @@ class BookController extends Controller
                 'price' => ['nullable'],
                 'shop_links' => ['nullable', 'json']
             ]);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 400,
-                'message' => $e->getMessage(),
-            ], 400);
-        }
-
-        // ganti user_id
-        $data['user_id'] = 1;
-
-        try {
-            if ($request->file('cover')) {
-                $data['cover'] = Storage::putFile('book/cover', $request->file('cover'));
+            $data = array_merge($data, $validator->validated());
+            if ($validator->fails()) {
+                throw new Exception(implode(", ", $validator->messages()->all()), 400);
             }
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
-            if ($request->file('file')) {
-                $data['file'] = Storage::putFile('book/file', $request->file('file'));
-            }
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
+            $data['user_id'] = $request->user()->id;
+
             $book_created = Book::create($data);
             $submission = new Submission([
                 'status' => json_encode(['status_id' => 0, 'label' => "Belum ada naskah"]),
@@ -84,17 +81,23 @@ class BookController extends Controller
             ]);
             $book = Book::find($book_created->id);
             $book->submission()->save($submission);
-            return response()->json([
-                'status' => 201,
-                'message' => "Buku berhasil diajukan!",
-                'data' => $book->with('submission')->find($book->id),
-            ], 201);
         } catch (Throwable $e) {
+            if (isset($data['file'])) {
+                Storage::delete($data['file']);
+            }
+            if (isset($data['cover'])) {
+                Storage::delete($data['cover']);
+            }
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
+        return response()->json([
+            'status' => 201,
+            'message' => "Buku berhasil diajukan!",
+            'data' => $book->with('submission')->find($book->id),
+        ], 201);
     }
 
     /**
@@ -103,7 +106,7 @@ class BookController extends Controller
     public function show(Book $book)
     {
         try {
-            $data = $book->with('user')->where('id', $book->id)->first();
+            $data = $book->with('user')->with('submission')->where('id', $book->id)->first();
             return response()->json([
                 'status' => 200,
                 'message' => "Berhasil mengambil data buku",
@@ -122,9 +125,16 @@ class BookController extends Controller
      */
     public function update(Request $request, Book $book)
     {
+        $this->authorize('update', $book);
         $data = [];
         try {
-            $data = $request->validate([
+            if ($request->file('cover')) {
+                $data['cover'] = Storage::putFile('book/cover', $request->file('cover'));
+            }
+            if ($request->file('file')) {
+                $data['file'] = Storage::putFile('book/file', $request->file('file'));
+            }
+            $validator = Validator::make($request->all(), [
                 'title' => ['nullable'],
                 'writers' => ['nullable'],
                 'status' => ['json', 'nullable'],
@@ -133,51 +143,40 @@ class BookController extends Controller
                 'price' => ['nullable'],
                 'shop_links' => ['nullable', 'json']
             ]);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 400,
-                'message' => $e->getMessage(),
-            ], 400);
-        }
-        try {
-            if ($request->file('cover')) {
-                if ($book->cover) {
-                    Storage::delete($book->cover);
-                }
-                $data['cover'] = Storage::putFile('book/cover', $request->file('cover'));
+            $data = array_merge($data, $validator->validated());
+            if ($validator->fails()) {
+                throw new Exception(implode(", ", $validator->messages()->all()), 400);
+            }
+            if (DB::table('books')->where('id', $book->id)->update($data) != 1) {
+                throw new Exception("Data tidak berubah", 422);
             }
         } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
-            if ($request->file('file')) {
-                if ($book->file) {
-                    Storage::delete($book->file);
-                }
-                $data['file'] = Storage::putFile('book/file', $request->file('file'));
+            if (isset($data['file'])) {
+                Storage::delete($data['file']);
             }
-        } catch (Throwable $e) {
+            if (isset($data['cover'])) {
+                Storage::delete($data['cover']);
+            }
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
-        try {
-            DB::table('books')->where('id', $book->id)->update($data);
-            return response()->json([
-                'status' => 200,
-                'message' => "Buku berhasil diubah",
-                'data' => Book::find($book->id),
-            ], 200);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
+        if ($request->file('cover')) {
+            if ($book->cover) {
+                Storage::delete($book->cover);
+            }
         }
+        if ($request->file('file')) {
+            if ($book->file) {
+                Storage::delete($book->file);
+            }
+        }
+        return response()->json([
+            'status' => 200,
+            'message' => "Buku berhasil diubah",
+            'data' => Book::find($book->id),
+        ], 200);
     }
 
     /**
@@ -185,27 +184,29 @@ class BookController extends Controller
      */
     public function destroy(Book $book)
     {
+        $this->authorize('delete', $book);
         try {
-            $submission_draft = $book->submission->draft;
-            DB::table('books')->delete($book->id);
-            if ($book->cover) {
-                Storage::delete($book->cover);
+            if (DB::table('books')->delete($book->id) != 1) {
+                throw new Exception("Gagal menghapus data", 422);
             }
-            if ($book->file) {
-                Storage::delete($book->file);
-            }
-            if ($submission_draft) {
-                Storage::delete($submission_draft);
-            }
-            return response()->json([
-                'status' => 200,
-                'message' => "Buku berhasil dihapus",
-            ], 200);
         } catch (Throwable $e) {
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
+        if ($book->cover) {
+            Storage::delete($book->cover);
+        }
+        if ($book->file) {
+            Storage::delete($book->file);
+        }
+        if ($book->submission?->draft) {
+            Storage::delete($book->submission->draft);
+        }
+        return response()->json([
+            'status' => 200,
+            'message' => "Buku berhasil dihapus",
+        ], 200);
     }
 }

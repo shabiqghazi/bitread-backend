@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Submission;
 use App\Models\Book;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class SubmissionController extends Controller
@@ -30,139 +31,44 @@ class SubmissionController extends Controller
             ], 500);
         }
     }
-    /**
-     * Store a newly created resource in storage.
-     */
-    // public function store(StoreSubmissionRequest $request)
-    // {
-
-    // }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Book $book, Submission $submission)
-    {
-        try {
-            $data = Book::with('user')->with(['submission' => function ($query) use ($submission) {
-                $query->where('submissions.id', $submission->id);
-            }])->where('id', $book->id)->first();
-            return response()->json([
-                'status' => 200,
-                'message' => "Berhasil mengambil data submission",
-                'data' => $data
-            ], 200);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-    }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Book $book, Submission $submission)
+    public function update(Request $request, Book $book)
     {
+        $this->authorize('update', $book);
         $data = [];
         try {
-            $data = $request->validate([
-                'status' => ['nullable'],
-                'draft' => ['nullable'],
-                'last_message' => ['nullable'],
-            ]);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 400,
-                'message' => $e->getMessage(),
-            ], 400);
-        }
-        try {
             if ($request->file('draft')) {
-                if ($submission->draft) {
-                    Storage::delete($submission->draft);
-                }
                 $data['draft'] = Storage::putFile('submission/draft', $request->file('draft'));
             }
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
-            $row = DB::table('submissions')->where('book_id', $book->id)->where('id', $submission->id)->count();
-            if ($row < 1) {
-                return response()->json([
-                    'status' => 404,
-                    'message' => "Data tidak ditemukan",
-                ], 404);
+            $validator = Validator::make($request->all(), [
+                'status' => ['nullable'],
+                'last_message' => ['nullable'],
+            ]);
+            $data = array_merge($data, $validator->validated());
+            if ($validator->fails()) {
+                throw new Exception(implode(", ", $validator->messages()->all()), 400);
             }
-            if (DB::table('submissions')->where('book_id', $book->id)->where('id', $submission->id)->update($data) == 1) {
-                return response()->json([
-                    'status' => 200,
-                    'message' => "Pengajuan berhasil disimpan",
-                    'data' => DB::table('submissions')->where('book_id', $book->id)->where('id', $submission->id)->first()
-                ], 200);
-            } else {
-                return response()->json([
-                    'status' => 422,
-                    'message' => "Gagal mengubah data",
-                ], 422);
+            if (DB::table('submissions')->where('id', $book->id)->update($data) != 1) {
+                throw new Exception("Data tidak berubah", 422);
             }
         } catch (Throwable $e) {
-            if ($e->getCode() == 42000) {
-                return response()->json([
-                    'status' => 402,
-                    'message' => "Tidak ada data yang diubah",
-                ], 500);
-            }
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Book $book, Submission $submission)
-    {
-        try {
-            $row = DB::table('submissions')->where('book_id', $book->id)->where('id', $submission->id)->count();
-            if ($row < 1) {
-                if ($submission->draft) {
-                    Storage::delete($submission->draft);
-                }
-                return response()->json([
-                    'status' => 404,
-                    'message' => "Data tidak ditemukan",
-                ], 404);
+        if ($request->file('draft')) {
+            if ($book->submission?->draft) {
+                Storage::delete($book->submission->draft);
             }
-            if (DB::table('submissions')->where('book_id', $book->id)->where('id', $submission->id)->delete() == 1) {
-                return response()->json([
-                    'status' => 200,
-                    'message' => "Pengajuan berhasil dihapus",
-                ], 200);
-            } else {
-                return response()->json([
-                    'status' => 422,
-                    'message' => "Gagal menghapus data",
-                ], 422);
-            }
-        } catch (Throwable $e) {
-            if ($e->getCode() == 42000) {
-                return response()->json([
-                    'status' => 402,
-                    'message' => "Tidak ada data yang diubah",
-                ], 500);
-            }
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
         }
+        return response()->json([
+            'status' => 200,
+            'message' => "Pengajuan berhasil disimpan",
+            'data' => DB::table('submissions')->where('id', $book->id)->first()
+        ], 200);
     }
 }

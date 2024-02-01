@@ -13,7 +13,7 @@ class ProjectPolicy
      */
     public function viewAny(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -21,7 +21,7 @@ class ProjectPolicy
      */
     public function view(User $user, Project $project): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -29,38 +29,53 @@ class ProjectPolicy
      */
     public function create(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
      * Determine whether the user can update the model.
      */
-    public function update(User $user, Project $project): bool
+    public function update(User $user, Project $project): Response
     {
-        //
+        if ($user->id == $project->user_id) {
+            return Response::allow();
+        }
+        return Response::deny('You do not have access to this action.');
     }
 
     /**
      * Determine whether the user can delete the model.
      */
-    public function delete(User $user, Project $project): bool
+    public function delete(User $user, Project $project): Response
     {
-        //
+        if (json_decode($user->role)->role_id == 1) {
+            return Response::allow();
+        }
+        if ($user->id == $project->user_id) {
+            return Response::allow();
+        }
+        return Response::deny('You do not have access to this action.');
     }
 
     /**
      * Determine whether the user can restore the model.
      */
-    public function restore(User $user, Project $project): bool
+    public function restore(User $user, Project $project): Response
     {
-        //
+        if ($user->id == $project->user_id) {
+            return Response::allow();
+        }
+        return Response::deny('You do not have access to this action.');
     }
 
     /**
      * Determine whether the user can permanently delete the model.
      */
-    public function forceDelete(User $user, Project $project): bool
+    public function forceDelete(User $user, Project $project): Response
     {
-        //
+        if ($user->id == $project->user_id) {
+            return Response::allow();
+        }
+        return Response::deny('You do not have access to this action.');
     }
 }

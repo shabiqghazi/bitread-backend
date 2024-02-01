@@ -4,10 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\Chapter;
 use App\Models\Project;
+use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class ChapterController extends Controller
@@ -18,7 +20,11 @@ class ChapterController extends Controller
     public function index(Project $project)
     {
         try {
-            $data = $project::with('chapters')->with('user')->where('id', $project->id)->get();
+            $data = $project::with([
+                'chapters' => function ($q) {
+                    $q->withCount('chapterComments');
+                }
+            ])->with('user')->where('id', $project->id)->first();
             return response()->json([
                 'status' => 200,
                 'message' => "Berhasil mengambil data chapters",
@@ -37,30 +43,20 @@ class ChapterController extends Controller
      */
     public function store(Request $request, Project $project)
     {
+        $this->authorize('create', $project);
         $data = [];
-        try {
-            $data = $request->validate([
-                'title' => ['nullable'],
-                'text' => ['nullable'],
-                'image' => ['nullable'],
-            ]);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 400,
-                'message' => $e->getMessage(),
-            ], 400);
-        }
         try {
             if ($request->file('image')) {
                 $data['image'] = Storage::putFile('chapter/image', $request->file('image'));
             }
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
+            $validator = Validator::make($request->all(), [
+                'title' => ['nullable'],
+                'text' => ['nullable'],
+            ]);
+            if ($validator->fails()) {
+                throw new Exception(implode(", ", $validator->messages()->all()), 400);
+            }
+            $data = array_merge($data, $validator->validated());
             $chapter = new Chapter([
                 'title' => isset($data['title']) ? $data['title'] : "",
                 'text' => isset($data['text']) ? $data['text'] : "",
@@ -69,17 +65,20 @@ class ChapterController extends Controller
             ]);
             $project = Project::find($project->id);
             $chapter_created = $project->chapters()->save($chapter);
-            return response()->json([
-                'status' => 201,
-                'message' => "Berhasil menambah chapter!",
-                'data' => Chapter::with('project')->find($chapter_created->id),
-            ], 201);
         } catch (Throwable $e) {
+            if (isset($data['image'])) {
+                Storage::delete($data['image']);
+            }
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
+        return response()->json([
+            'status' => 201,
+            'message' => "Berhasil menambah chapter!",
+            'data' => Chapter::with('project')->find($chapter_created->id),
+        ], 201);
     }
 
     /**
@@ -89,7 +88,7 @@ class ChapterController extends Controller
     {
         try {
             $data = Project::with('user')->with(['chapters' => function ($query) use ($chapter) {
-                $query->where('chapters.id', $chapter->id);
+                $query->where('chapters.id', $chapter->id)->with('chapterComments');
             }])->where('id', $project->id)->first();
             return response()->json([
                 'status' => 200,
@@ -109,60 +108,47 @@ class ChapterController extends Controller
      */
     public function update(Request $request, Project $project, Chapter $chapter)
     {
+        $this->authorize('update', $project);
         $data = [];
         try {
-            $data = $request->validate([
+            if ($request->file('image')) {
+                $data['image'] = Storage::putFile('chapter/image', $request->file('image'));
+            }
+            $row = DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->count();
+            if ($row < 1) {
+                throw new Exception("Data tidak ditemukan", 404);
+            }
+            $validator = Validator::make($request->all(), [
                 'title' => ['nullable'],
                 'status' => ['nullable'],
                 'text' => ['nullable'],
-                'image' => ['nullable'],
             ]);
-        } catch (Throwable $e) {
-            return response()->json([
-                'status' => 400,
-                'message' => $e->getMessage(),
-            ], 400);
-        }
-        try {
-            if ($request->file('image')) {
-                if ($chapter->image) {
-                    Storage::delete($chapter->image);
-                }
-                $data['image'] = Storage::putFile('chapter/image', $request->file('image'));
+            $data = array_merge($data, $validator->validated());
+            if ($validator->fails()) {
+                throw new Exception(implode(", ", $validator->messages()->all()), 400);
+            }
+            if (DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->update($data) != 1) {
+                throw new Exception("Data tidak berubah", 422);
             }
         } catch (Throwable $e) {
-            return response()->json([
-                'status' => 500,
-                'message' => $e->getMessage(),
-            ], 500);
-        }
-        try {
-            $row = DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->count();
-            if ($row < 1) {
+            if (isset($data['image'])) {
                 Storage::delete($data['image']);
-                return response()->json([
-                    'status' => 404,
-                    'message' => "Data tidak ditemukan",
-                ], 404);
             }
-            if (DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->update($data) == 1) {
-                return response()->json([
-                    'status' => 200,
-                    'message' => "Chapter berhasil disimpan",
-                    'data' => DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->first()
-                ], 200);
-            } else {
-                return response()->json([
-                    'status' => 422,
-                    'message' => "Data tidak terubah",
-                ], 422);
-            }
-        } catch (Throwable $e) {
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
+        if ($request->file('image')) {
+            if ($chapter->image) {
+                Storage::delete($chapter->image);
+            }
+        }
+        return response()->json([
+            'status' => 200,
+            'message' => "Chapter berhasil disimpan",
+            'data' => DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->first()
+        ], 200);
     }
 
     /**
@@ -170,35 +156,28 @@ class ChapterController extends Controller
      */
     public function destroy(Project $project, Chapter $chapter)
     {
-
+        $this->authorize('delete', $project);
         try {
             $row = DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->count();
             if ($row < 1) {
-                return response()->json([
-                    'status' => 404,
-                    'message' => "Data tidak ditemukan",
-                ], 404);
+                throw new Exception("Data tidak ditemukan", 404);
             }
-            if (DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->delete() == 1) {
-                if ($chapter->image) {
-                    Storage::delete($chapter->image);
-                }
-                return response()->json([
-                    'status' => 200,
-                    'message' => "Chapter berhasil dihapus",
-                ], 200);
-            } else {
-                return response()->json([
-                    'status' => 422,
-                    'message' => "Gagal menghapus data",
-                ], 422);
+            if (DB::table('chapters')->where('id', $chapter->id)->where('project_id', $project->id)->delete() != 1) {
+                throw new Exception("Gagal menghapus data", 422);
             }
         } catch (Throwable $e) {
             return response()->json([
-                'status' => 500,
+                'status' => $e->getCode(),
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $e->getCode());
         }
+        if ($chapter->image) {
+            Storage::delete($chapter->image);
+        }
+        return response()->json([
+            'status' => 200,
+            'message' => "Chapter berhasil dihapus",
+        ], 200);
     }
     public function saveDraft()
     {

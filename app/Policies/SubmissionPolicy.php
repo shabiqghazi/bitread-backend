@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Models\Book;
 use App\Models\Submission;
 use App\Models\User;
 use Illuminate\Auth\Access\Response;
@@ -13,7 +14,7 @@ class SubmissionPolicy
      */
     public function viewAny(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -21,46 +22,20 @@ class SubmissionPolicy
      */
     public function view(User $user, Submission $submission): bool
     {
-        //
-    }
-
-    /**
-     * Determine whether the user can create models.
-     */
-    public function create(User $user): bool
-    {
-        //
+        return true;
     }
 
     /**
      * Determine whether the user can update the model.
      */
-    public function update(User $user, Submission $submission): bool
+    public function update(User $user, Book $book): Response
     {
-        //
-    }
-
-    /**
-     * Determine whether the user can delete the model.
-     */
-    public function delete(User $user, Submission $submission): bool
-    {
-        //
-    }
-
-    /**
-     * Determine whether the user can restore the model.
-     */
-    public function restore(User $user, Submission $submission): bool
-    {
-        //
-    }
-
-    /**
-     * Determine whether the user can permanently delete the model.
-     */
-    public function forceDelete(User $user, Submission $submission): bool
-    {
-        //
+        if (json_decode($user->role)->role_id == 1) {
+            return Response::allow();
+        }
+        if ($user->id == $book->user_id) {
+            return Response::allow();
+        }
+        return Response::deny('You do not have access to this action.');
     }
 }

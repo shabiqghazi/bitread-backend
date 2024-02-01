@@ -21,6 +21,7 @@ return new class extends Migration
             $table->string('gender')->nullable();
             $table->text('bio')->nullable();
             $table->json('social')->nullable();
+            $table->string('display_picture')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });
